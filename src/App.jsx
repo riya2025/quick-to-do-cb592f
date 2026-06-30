@@ -3,206 +3,61 @@ import { HashRouter, Routes, Route, Link, NavLink, useNavigate, useParams, Navig
 
 const COLLECTION = 'tasks';
 
-function useTasks() {
-  const [tasks, setTasks] = useState([]);
-  const loaded = useRef(false);
-
-  useEffect(() => {
-    if (loaded.current) return;
-    loaded.current = true;
-    const localData = localStorage.getItem(COLLECTION);
-    if (localData) {
-      try {
-        setTasks(JSON.parse(localData));
-      } catch (e) {
-        /* ignore */
-      }
-    }
-    if (window.API_BASE) {
-      fetch(window.API_BASE + '/api/store/' + COLLECTION)
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            setTasks(data);
-            localStorage.setItem(COLLECTION, JSON.stringify(data));
-          }
-        })
-        .catch(() => {});
-    }
-  }, []);
-
-  const persist = (updated) => {
-    setTasks(updated);
-    localStorage.setItem(COLLECTION, JSON.stringify(updated));
-  };
-
-  const addTask = async (title) => {
-    const newRec = { title, done: false, createdAt: Date.now() };
-    let saved = { ...newRec, id: 'local_' + Date.now() };
-    if (window.API_BASE) {
-      try {
-        const res = await fetch(window.API_BASE + '/api/store/' + COLLECTION, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: newRec })
-        });
-        const data = await res.json();
-        if (data && data.id) saved = data;
-      } catch (e) { /* fallback to local */ }
-    }
-    persist([...tasks, saved]);
-  };
-
-  const toggleTask = async (id) => {
-    const idx = tasks.findIndex(t => t.id === id);
-    if (idx === -1) return;
-    const updated = tasks.map(t => t.id === id ? { ...t, done: !t.done } : t);
-    persist(updated);
-    if (window.API_BASE) {
-      try {
-        await fetch(window.API_BASE + '/api/store/' + COLLECTION + '/' + id, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: updated.find(t => t.id === id) })
-        });
-      } catch (e) { /* fallback */ }
-    }
-  };
-
-  const deleteTask = async (id) => {
-    const updated = tasks.filter(t => t.id !== id);
-    persist(updated);
-    if (window.API_BASE) {
-      try {
-        await fetch(window.API_BASE + '/api/store/' + COLLECTION + '/' + id, { method: 'DELETE' });
-      } catch (e) { /* fallback */ }
-    }
-  };
-
-  return { tasks, addTask, toggleTask, deleteTask };
+function loadLocal() {
+  try {
+    const raw = localStorage.getItem('quicktodo_tasks');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
 }
 
-function TaskInput({ onAdd }) {
-  const [value, setValue] = useState('');
+function saveLocal(tasks) {
+  try {
+    localStorage.setItem('quicktodo_tasks', JSON.stringify(tasks));
+  } catch {}
+}
+
+async function apiFetch(method, path, body) {
+  const base = window.API_BASE;
+  if (!base) return null;
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' }
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(base + path, opts);
+  if (method === 'DELETE') return null;
+  return await res.json();
+}
+
+export default function App() {
+  const [tasks, setTasks] = useState(loadLocal);
+  const [filter, setFilter] = useState('all');
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(true);
   const inputRef = useRef(null);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    onAdd(trimmed);
-    setValue('');
-    if (inputRef.current) inputRef.current.focus();
-  };
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const data = await apiFetch('GET', '/api/store/' + COLLECTION);
+        if (mounted && Array.isArray(data)) {
+          setTasks(data);
+          saveLocal(data);
+        }
+      } catch {}
+      if (mounted) setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, []);
 
-  return (
-    <form className="row" onSubmit={handleSubmit}>
-      <input
-        ref={inputRef}
-        className="input"
-        type="text"
-        placeholder="What needs to be done?"
-        value={value}
-        onChange={e => setValue(e.target.value)}
-      />
-      <button className="btn btn-primary" type="submit">Add</button>
-    </form>
-  );
-}
+  useEffect(() => {
+    saveLocal(tasks);
+  }, [tasks]);
 
-function FilterBar({ filter, setFilter, counts }) {
-  return (
-    <div className="row filter-bar">
-      <NavLink 
-        to="/" 
-        end
-        className={({ isActive }) => isActive && filter === 'all' ? 'btn btn-primary filter-btn' : 'btn filter-btn'}
-        onClick={() => setFilter('all')}
-      >
-        All <span className="pill">{counts.all}</span>
-      </NavLink>
-      <NavLink 
-        to="/active" 
-        className={({ isActive }) => isActive && filter === 'active' ? 'btn btn-primary filter-btn' : 'btn filter-btn'}
-        onClick={() => setFilter('active')}
-      >
-        Active <span className="pill">{counts.active}</span>
-      </NavLink>
-      <NavLink 
-        to="/done" 
-        className={({ isActive }) => isActive && filter === 'done' ? 'btn btn-primary filter-btn' : 'btn filter-btn'}
-        onClick={() => setFilter('done')}
-      >
-        Done <span className="pill">{counts.done}</span>
-      </NavLink>
-    </div>
-  );
-}
-
-function TaskItem({ task, onToggle, onDelete }) {
-  const imgSeed = task.id ? task.id.replace(/\D/g, '') || '1' : '1';
-
-  return (
-    <li className="list-item rec">
-      <img 
-        className="avatar"
-        src={`https://loremflickr.com/400/300/task,checklist?lock=${imgSeed}`}
-        alt="task"
-        onError={(e) => { e.currentTarget.src = `https://picsum.photos/seed/${imgSeed}/400/300`; }}
-      />
-      <div className="task-content">
-        <span className={task.done ? 'task-title done' : 'task-title'}>{task.title}</span>
-        {task.done && <span className="badge">Done</span>}
-      </div>
-      <div className="task-actions">
-        <button 
-          className={task.done ? 'btn toggle-btn' : 'btn btn-primary toggle-btn'} 
-          onClick={() => onToggle(task.id)}
-        >
-          {task.done ? 'Undo' : 'Complete'}
-        </button>
-        <button className="btn delete-btn" onClick={() => onDelete(task.id)}>Delete</button>
-      </div>
-    </li>
-  );
-}
-
-function TaskList({ tasks, onToggle, onDelete }) {
-  if (tasks.length === 0) {
-    return (
-      <div className="center box empty-state">
-        <p className="muted">No tasks here yet. Add one above!</p>
-      </div>
-    );
-  }
-
-  return (
-    <ul className="list">
-      {tasks.map(task => (
-        <TaskItem 
-          key={task.id} 
-          task={task} 
-          onToggle={onToggle} 
-          onDelete={onDelete} 
-        />
-      ))}
-    </ul>
-  );
-}
-
-function HomePage() {
-  const { tasks, addTask, toggleTask, deleteTask } = useTasks();
-  const navigate = useNavigate();
-  const [filter, setFilter] = useState('all');
-
-  const handleFilterChange = (newFilter) => {
-    setFilter(newFilter);
-    if (newFilter === 'all') navigate('/');
-    else if (newFilter === 'active') navigate('/active');
-    else if (newFilter === 'done') navigate('/done');
-  };
-
-  const filteredTasks = useMemo(() => {
+  const filtered = useMemo(() => {
     if (filter === 'active') return tasks.filter(t => !t.done);
     if (filter === 'done') return tasks.filter(t => t.done);
     return tasks;
@@ -214,113 +69,112 @@ function HomePage() {
     done: tasks.filter(t => t.done).length
   }), [tasks]);
 
-  return (
-    <div className="container">
-      <header className="hero">
-        <h1>Quick To-Do</h1>
-        <p className="muted">Organize your day, one task at a time.</p>
-      </header>
+  async function addTask(e) {
+    e.preventDefault();
+    const title = input.trim();
+    if (!title) return;
+    const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    const newTask = { id: tempId, title, done: false, createdAt: Date.now() };
+    setTasks(prev => [newTask, ...prev]);
+    setInput('');
+    inputRef.current?.focus();
+    try {
+      const saved = await apiFetch('POST', '/api/store/' + COLLECTION, { data: { title, done: false, createdAt: newTask.createdAt } });
+      if (saved && saved.id) {
+        setTasks(prev => prev.map(t => t.id === tempId ? saved : t));
+      }
+    } catch {}
+  }
 
-      <div className="card">
-        <TaskInput onAdd={addTask} />
-        <FilterBar filter={filter} setFilter={handleFilterChange} counts={counts} />
-        <TaskList tasks={filteredTasks} onToggle={toggleTask} onDelete={deleteTask} />
-      </div>
-    </div>
-  );
-}
+  async function toggleTask(id) {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    const updated = { ...task, done: !task.done };
+    setTasks(prev => prev.map(t => t.id === id ? updated : t));
+    try {
+      await apiFetch('PUT', '/api/store/' + COLLECTION + '/' + id, { data: { title: updated.title, done: updated.done, createdAt: updated.createdAt } });
+    } catch {}
+  }
 
-function ActivePage() {
-  const { tasks, addTask, toggleTask, deleteTask } = useTasks();
-  const navigate = useNavigate();
-  const [filter, setFilter] = useState('active');
+  async function deleteTask(id) {
+    setTasks(prev => prev.filter(t => t.id !== id));
+    try {
+      await apiFetch('DELETE', '/api/store/' + COLLECTION + '/' + id);
+    } catch {}
+  }
 
-  const handleFilterChange = (newFilter) => {
-    setFilter(newFilter);
-    if (newFilter === 'all') navigate('/');
-    else if (newFilter === 'active') navigate('/active');
-    else if (newFilter === 'done') navigate('/done');
-  };
-
-  const filteredTasks = useMemo(() => tasks.filter(t => !t.done), [tasks]);
-
-  const counts = useMemo(() => ({
-    all: tasks.length,
-    active: tasks.filter(t => !t.done).length,
-    done: tasks.filter(t => t.done).length
-  }), [tasks]);
-
-  return (
-    <div className="container">
-      <header className="hero">
-        <h1>Quick To-Do</h1>
-        <p className="muted">Organize your day, one task at a time.</p>
-      </header>
-
-      <div className="card">
-        <TaskInput onAdd={addTask} />
-        <FilterBar filter={filter} setFilter={handleFilterChange} counts={counts} />
-        <TaskList tasks={filteredTasks} onToggle={toggleTask} onDelete={deleteTask} />
-      </div>
-    </div>
-  );
-}
-
-function DonePage() {
-  const { tasks, addTask, toggleTask, deleteTask } = useTasks();
-  const navigate = useNavigate();
-  const [filter, setFilter] = useState('done');
-
-  const handleFilterChange = (newFilter) => {
-    setFilter(newFilter);
-    if (newFilter === 'all') navigate('/');
-    else if (newFilter === 'active') navigate('/active');
-    else if (newFilter === 'done') navigate('/done');
-  };
-
-  const filteredTasks = useMemo(() => tasks.filter(t => t.done), [tasks]);
-
-  const counts = useMemo(() => ({
-    all: tasks.length,
-    active: tasks.filter(t => !t.done).length,
-    done: tasks.filter(t => t.done).length
-  }), [tasks]);
-
-  return (
-    <div className="container">
-      <header className="hero">
-        <h1>Quick To-Do</h1>
-        <p className="muted">Organize your day, one task at a time.</p>
-      </header>
-
-      <div className="card">
-        <TaskInput onAdd={addTask} />
-        <FilterBar filter={filter} setFilter={handleFilterChange} counts={counts} />
-        <TaskList tasks={filteredTasks} onToggle={toggleTask} onDelete={deleteTask} />
-      </div>
-    </div>
-  );
-}
-
-export default function App() {
   return (
     <HashRouter>
       <div className="app">
-        <nav className="topbar nav">
-          <Link to="/" className="app-title">Quick To-Do</Link>
-          <div className="nav-links">
-            <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>All</NavLink>
-            <NavLink to="/active" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Active</NavLink>
-            <NavLink to="/done" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Done</NavLink>
+        <header className="topbar">
+          <div className="container wrap">
+            <h1 className="hero">Quick To-Do</h1>
+            <span className="badge">{counts.active} active</span>
           </div>
-        </nav>
-        <main className="wrap">
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/active" element={<ActivePage />} />
-            <Route path="/done" element={<DonePage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+        </header>
+        <main className="container">
+          <div className="card" style={{ marginBottom: '1.5rem' }}>
+            <form className="row" onSubmit={addTask}>
+              <input
+                ref={inputRef}
+                className="input"
+                type="text"
+                placeholder="What needs to be done?"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                aria-label="New task title"
+              />
+              <button className="btn btn-primary" type="submit">Add</button>
+            </form>
+          </div>
+
+          <div className="row" style={{ marginBottom: '1rem', gap: '0.5rem' }}>
+            {['all', 'active', 'done'].map(f => (
+              <button
+                key={f}
+                className={`btn ${filter === f ? 'btn-primary' : ''}`}
+                onClick={() => setFilter(f)}
+              >
+                {f.charAt(0).toUpperCase() + f.slice(1)}
+                <span className="pill" style={{ marginLeft: '0.5rem' }}>{counts[f]}</span>
+              </button>
+            ))}
+          </div>
+
+          {loading && tasks.length === 0 ? (
+            <div className="center muted">Loading tasks…</div>
+          ) : filtered.length === 0 ? (
+            <div className="center muted">
+              {filter === 'all' ? 'No tasks yet — add one above!' : `No ${filter} tasks.`}
+            </div>
+          ) : (
+            <ul className="list">
+              {filtered.map(task => (
+                <li key={task.id} className="list-item rec">
+                  <label className="field row" style={{ flex: 1, gap: '0.75rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!task.done}
+                      onChange={() => toggleTask(task.id)}
+                      aria-label={`Mark "${task.title}" as ${task.done ? 'active' : 'done'}`}
+                    />
+                    <span className={task.done ? 'muted' : ''} style={{ textDecoration: task.done ? 'line-through' : 'none', flex: 1 }}>
+                      {task.title}
+                    </span>
+                  </label>
+                  <button className="btn" onClick={() => deleteTask(task.id)} aria-label={`Delete "${task.title}"`}>
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {counts.done > 0 && (
+            <div className="center muted" style={{ marginTop: '1rem', fontSize: '0.85rem' }}>
+              {counts.done} task{counts.done !== 1 ? 's' : ''} completed
+            </div>
+          )}
         </main>
       </div>
     </HashRouter>

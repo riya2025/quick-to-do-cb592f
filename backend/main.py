@@ -1,11 +1,15 @@
 import os
+import random
+from datetime import datetime, timezone
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
 import db
 
-app = FastAPI(title="Quick To-Do")
+app = FastAPI(title="Quick To-Do", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -15,18 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.on_event("startup")
-def startup():
-    db.init_db()
-
-
 app.include_router(db.router)
-
-
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
 
 
 class TaskCreate(BaseModel):
@@ -42,39 +35,58 @@ class TaskOut(BaseModel):
     id: str
     title: str
     done: bool
+    created_at: str
 
 
-@app.post("/api/tasks", response_model=TaskOut)
-def add_task(task_in: TaskCreate):
-    data = {"title": task_in.title, "done": False}
+class TaskListResponse(BaseModel):
+    tasks: List[TaskOut]
+
+
+@app.on_event("startup")
+def startup():
+    db.init_db()
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/api/tasks", response_model=TaskOut, status_code=201)
+def create_task(body: TaskCreate):
+    data = {
+        "title": body.title,
+        "done": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
     record = db.add_record("tasks", data)
     return record
 
 
-@app.get("/api/tasks", response_model=List[TaskOut])
-def list_tasks(filter: Optional[str] = None):
+@app.get("/api/tasks", response_model=TaskListResponse)
+def list_tasks(filter: Optional[str] = Query(None, alias="filter")):
     records = db.list_records("tasks")
-    if filter == "Active":
-        records = [r for r in records if not r.get("done")]
-    elif filter == "Done":
-        records = [r for r in records if r.get("done")]
-    return records
+    if filter == "active":
+        records = [r for r in records if not r.get("done", False)]
+    elif filter == "done":
+        records = [r for r in records if r.get("done", False)]
+    return {"tasks": records}
 
 
 @app.put("/api/tasks/{task_id}", response_model=TaskOut)
-def update_task(task_id: str, task_in: TaskUpdate):
+def update_task(task_id: str, body: TaskUpdate):
     existing = None
     for r in db.list_records("tasks"):
-        if r["id"] == task_id:
+        if r.get("id") == task_id:
             existing = r
             break
     if not existing:
         raise HTTPException(status_code=404, detail="Task not found")
     update_data = {}
-    if task_in.title is not None:
-        update_data["title"] = task_in.title
-    if task_in.done is not None:
-        update_data["done"] = task_in.done
+    if body.title is not None:
+        update_data["title"] = body.title
+    if body.done is not None:
+        update_data["done"] = body.done
     if not update_data:
         return existing
     updated = db.update_record(task_id, update_data)
@@ -85,7 +97,7 @@ def update_task(task_id: str, task_in: TaskUpdate):
 def delete_task(task_id: str):
     existing = None
     for r in db.list_records("tasks"):
-        if r["id"] == task_id:
+        if r.get("id") == task_id:
             existing = r
             break
     if not existing:
