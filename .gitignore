@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# env / secrets (never commit these)
+.env
+*.env
+backend/.env
+
+# local database files
+*.db
+*.sqlite
+*.sqlite3
+
+# misc
+.DS_Store
+*.log
