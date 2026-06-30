@@ -3,6 +3,19 @@
     {
       "source": "/(.*)",
       "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "type": "service",
+        "service": "quick-to-do-api"
+      }
     }
-  ]
+  ],
+  "services": {
+    "quick-to-do-api": {
+      "root": ".",
+      "framework": "vite"
+    }
+  }
 }

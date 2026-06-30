@@ -2,7 +2,7 @@ import secrets
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -21,16 +21,6 @@ app.add_middleware(
 app.include_router(db.router)
 
 
-@app.on_event("startup")
-def startup():
-    db.init_db()
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
 class TaskCreate(BaseModel):
     title: str
 
@@ -47,58 +37,69 @@ class TaskOut(BaseModel):
     created_at: str
 
 
+@app.on_event("startup")
+def startup():
+    db.init_db()
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.post("/api/tasks", response_model=TaskOut)
-def create_task(task_in: TaskCreate):
+def create_task(body: TaskCreate):
+    task_id = secrets.token_hex(8)
     now = datetime.utcnow().isoformat()
-    data = {
-        "title": task_in.title,
+    task = {
+        "id": task_id,
+        "title": body.title,
         "done": False,
         "created_at": now,
     }
-    record = db.add_record("tasks", data)
-    return record
+    db.add_record("tasks", task)
+    return task
 
 
 @app.get("/api/tasks", response_model=List[TaskOut])
-def list_tasks(filter: Optional[str] = Query("all", alias="filter")):
-    records = db.list_records("tasks")
-    if filter == "active":
-        records = [r for r in records if not r.get("done")]
-    elif filter == "done":
-        records = [r for r in records if r.get("done")]
-    return records
+def list_tasks(filter: Optional[str] = None):
+    tasks = db.list_records("tasks")
+    if filter == "Active":
+        tasks = [t for t in tasks if not t.get("done", False)]
+    elif filter == "Done":
+        tasks = [t for t in tasks if t.get("done", False)]
+    return tasks
 
 
 @app.put("/api/tasks/{task_id}", response_model=TaskOut)
-def update_task(task_id: str, task_in: TaskUpdate):
-    records = db.list_records("tasks")
-    found = False
-    for r in records:
-        if r.get("id") == task_id:
-            found = True
+def update_task(task_id: str, body: TaskUpdate):
+    existing = None
+    for t in db.list_records("tasks"):
+        if t["id"] == task_id:
+            existing = t
             break
-    if not found:
+    if not existing:
         raise HTTPException(status_code=404, detail="Task not found")
     update_data = {}
-    if task_in.title is not None:
-        update_data["title"] = task_in.title
-    if task_in.done is not None:
-        update_data["done"] = task_in.done
+    if body.title is not None:
+        update_data["title"] = body.title
+    if body.done is not None:
+        update_data["done"] = body.done
     if not update_data:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    updated = db.update_record(task_id, update_data)
-    return updated
+        return existing
+    db.update_record(task_id, update_data)
+    existing.update(update_data)
+    return existing
 
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: str):
-    records = db.list_records("tasks")
-    found = False
-    for r in records:
-        if r.get("id") == task_id:
-            found = True
+    existing = None
+    for t in db.list_records("tasks"):
+        if t["id"] == task_id:
+            existing = t
             break
-    if not found:
+    if not existing:
         raise HTTPException(status_code=404, detail="Task not found")
     db.delete_record(task_id)
     return {"detail": "Task deleted"}
