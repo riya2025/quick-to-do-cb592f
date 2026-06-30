@@ -4,121 +4,116 @@ from main import app
 client = TestClient(app)
 
 
-def test_health():
+def test_health_check():
     response = client.get("/health")
     assert response.status_code == 200
-    data = response.json()
-    assert "status" in data
-    assert data["status"] == "ok"
+    assert response.json() == {"status": "ok"}
 
 
-def test_create_task():
+def test_add_task():
     response = client.post("/api/tasks", json={"title": "Test task"})
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data["id"], str)
-    assert isinstance(data["title"], str)
-    assert isinstance(data["done"], bool)
-    assert isinstance(data["created_at"], str)
     assert data["title"] == "Test task"
     assert data["done"] is False
 
 
 def test_list_tasks():
-    client.post("/api/tasks", json={"title": "List task 1"})
-    client.post("/api/tasks", json={"title": "List task 2"})
-    
+    client.post("/api/tasks", json={"title": "Task A"})
+    client.post("/api/tasks", json={"title": "Task B"})
     response = client.get("/api/tasks")
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
-    assert len(data) >= 2
-    for task in data:
-        assert isinstance(task["id"], str)
-        assert isinstance(task["title"], str)
-        assert isinstance(task["done"], bool)
-        assert isinstance(task["created_at"], str)
+    for item in data:
+        assert isinstance(item["id"], str)
+        assert isinstance(item["title"], str)
+        assert isinstance(item["done"], bool)
 
 
 def test_list_tasks_filter_active():
-    client.post("/api/tasks", json={"title": "Active task"})
-    
+    resp1 = client.post("/api/tasks", json={"title": "Active task"})
+    task_id = resp1.json()["id"]
+    resp2 = client.post("/api/tasks", json={"title": "Done task"})
+    done_id = resp2.json()["id"]
+    client.put(f"/api/tasks/{done_id}", json={"done": True})
+
     response = client.get("/api/tasks", params={"filter": "Active"})
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
-    for task in data:
-        assert task["done"] is False
+    for item in data:
+        assert item["done"] is False
+    assert any(t["id"] == task_id for t in data)
 
 
 def test_list_tasks_filter_done():
-    create_resp = client.post("/api/tasks", json={"title": "Done filter task"})
-    task_id = create_resp.json()["id"]
-    client.put(f"/api/tasks/{task_id}", json={"done": True})
-    
+    resp1 = client.post("/api/tasks", json={"title": "Active task 2"})
+    active_id = resp1.json()["id"]
+    resp2 = client.post("/api/tasks", json={"title": "Done task 2"})
+    done_id = resp2.json()["id"]
+    client.put(f"/api/tasks/{done_id}", json={"done": True})
+
     response = client.get("/api/tasks", params={"filter": "Done"})
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
-    for task in data:
-        assert task["done"] is True
+    for item in data:
+        assert item["done"] is True
+    assert any(t["id"] == done_id for t in data)
 
 
 def test_update_task_title():
-    create_resp = client.post("/api/tasks", json={"title": "Original title"})
-    task_id = create_resp.json()["id"]
-    
-    update_resp = client.put(f"/api/tasks/{task_id}", json={"title": "Updated title"})
-    assert update_resp.status_code == 200
-    data = update_resp.json()
-    assert isinstance(data["id"], str)
-    assert isinstance(data["title"], str)
-    assert isinstance(data["done"], bool)
-    assert isinstance(data["created_at"], str)
-    assert data["title"] == "Updated title"
+    resp = client.post("/api/tasks", json={"title": "Old title"})
+    task_id = resp.json()["id"]
+    response = client.put(f"/api/tasks/{task_id}", json={"title": "New title"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == task_id
+    assert data["title"] == "New title"
+    assert data["done"] is False
 
 
 def test_update_task_done():
-    create_resp = client.post("/api/tasks", json={"title": "Mark done task"})
-    task_id = create_resp.json()["id"]
-    
-    update_resp = client.put(f"/api/tasks/{task_id}", json={"done": True})
-    assert update_resp.status_code == 200
-    data = update_resp.json()
-    assert isinstance(data["id"], str)
-    assert isinstance(data["title"], str)
-    assert isinstance(data["done"], bool)
-    assert isinstance(data["created_at"], str)
+    resp = client.post("/api/tasks", json={"title": "Task to complete"})
+    task_id = resp.json()["id"]
+    response = client.put(f"/api/tasks/{task_id}", json={"done": True})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == task_id
     assert data["done"] is True
 
 
 def test_update_task_no_fields():
-    create_resp = client.post("/api/tasks", json={"title": "No update task"})
-    task_id = create_resp.json()["id"]
-    
-    update_resp = client.put(f"/api/tasks/{task_id}", json={})
-    assert update_resp.status_code == 200
-    data = update_resp.json()
-    assert data["title"] == "No update task"
+    resp = client.post("/api/tasks", json={"title": "No change task"})
+    task_id = resp.json()["id"]
+    response = client.put(f"/api/tasks/{task_id}", json={})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == task_id
+    assert data["title"] == "No change task"
     assert data["done"] is False
 
 
 def test_update_task_not_found():
-    response = client.put("/api/tasks/nonexistent_id", json={"title": "Does not matter"})
+    response = client.put("/api/tasks/nonexistent-id", json={"title": "X"})
     assert response.status_code == 404
     assert response.json()["detail"] == "Task not found"
 
 
 def test_delete_task():
-    create_resp = client.post("/api/tasks", json={"title": "Delete me"})
-    task_id = create_resp.json()["id"]
-    
-    delete_resp = client.delete(f"/api/tasks/{task_id}")
-    assert delete_resp.status_code == 200
-    assert delete_resp.json()["detail"] == "Task deleted"
+    resp = client.post("/api/tasks", json={"title": "Task to delete"})
+    task_id = resp.json()["id"]
+    response = client.delete(f"/api/tasks/{task_id}")
+    assert response.status_code == 200
+    assert response.json() == {"detail": "Task deleted"}
+
+    verify = client.get("/api/tasks")
+    assert all(t["id"] != task_id for t in verify.json())
 
 
 def test_delete_task_not_found():
-    response = client.delete("/api/tasks/nonexistent_id")
+    response = client.delete("/api/tasks/nonexistent-id")
     assert response.status_code == 404
     assert response.json()["detail"] == "Task not found"
